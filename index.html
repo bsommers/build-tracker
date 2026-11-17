@@ -1,0 +1,11 @@
+<!doctype html><meta charset=utf-8><title>Forge Build Tracker</title>
+<style>:root{--bg:#0b0f1a;--c:#141b2d;--t:#e6edf7;--m:#7d8aa8}body{background:var(--bg);color:var(--t);font:15px system-ui;margin:0;padding:24px}
+h1{margin:0 0 4px}#bar{height:10px;background:#1d2740;border-radius:6px;margin:12px 0 20px;overflow:hidden}#bar i{display:block;height:100%;background:linear-gradient(90deg,#4f8cff,#34e0a1);transition:width .5s}
+.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}.k{background:var(--c);border-radius:12px;padding:14px;border-left:4px solid #3a4666}
+.k.running{border-color:#ffb020;animation:p 1.4s infinite}.k.done{border-color:#34e0a1}.k.failed{border-color:#ff5470}@keyframes p{50%{box-shadow:0 0 14px #ffb02066}}
+.m{color:var(--m);font-size:12px}.s{float:right;font-size:12px;text-transform:uppercase}pre{background:var(--c);padding:12px;border-radius:10px;color:var(--m);max-height:200px;overflow:auto;font-size:12px}</style>
+<h1>⚒ MCP Forge — build tracker</h1><div class=m id=sum></div><div id=bar><i></i></div><div class=g id=g></div><h3>Log</h3><pre id=l></pre>
+<script>async function r(){try{const d=await (await fetch('status.json?'+Date.now())).json(),n=d.tasks.length,x=d.tasks.filter(t=>t.state=='done').length,now=Date.now()/1e3;
+sum.textContent=`${x}/${n} done · ${d.tasks.filter(t=>t.state=='running').length} running`;bar.firstChild.style.width=100*x/n+'%';
+g.innerHTML=d.tasks.map(t=>`<div class="k ${t.state}"><span class=s>${t.state}</span><b>${t.id} · ${t.title}</b><div class=m>model: ${t.model}${t.start?' · '+Math.round((t.end||now)-t.start)+'s':''}</div><div>${t.note||''}</div></div>`).join('');
+l.textContent=d.log.slice(-30).reverse().map(e=>new Date(e[0]*1e3).toLocaleTimeString()+' '+e[1]+' '+e[2]+' '+e[3]).join('\n')}catch(e){}}r();setInterval(r,1500)</script>
