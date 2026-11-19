@@ -1,11 +1,261 @@
-<!doctype html><meta charset=utf-8><title>Forge Build Tracker</title>
-<style>:root{--bg:#0b0f1a;--c:#141b2d;--t:#e6edf7;--m:#7d8aa8}body{background:var(--bg);color:var(--t);font:15px system-ui;margin:0;padding:24px}
-h1{margin:0 0 4px}#bar{height:10px;background:#1d2740;border-radius:6px;margin:12px 0 20px;overflow:hidden}#bar i{display:block;height:100%;background:linear-gradient(90deg,#4f8cff,#34e0a1);transition:width .5s}
-.g{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}.k{background:var(--c);border-radius:12px;padding:14px;border-left:4px solid #3a4666}
-.k.running{border-color:#ffb020;animation:p 1.4s infinite}.k.done{border-color:#34e0a1}.k.failed{border-color:#ff5470}@keyframes p{50%{box-shadow:0 0 14px #ffb02066}}
-.m{color:var(--m);font-size:12px}.s{float:right;font-size:12px;text-transform:uppercase}pre{background:var(--c);padding:12px;border-radius:10px;color:var(--m);max-height:200px;overflow:auto;font-size:12px}</style>
-<h1>⚒ MCP Forge — build tracker</h1><div class=m id=sum></div><div id=bar><i></i></div><div class=g id=g></div><h3>Log</h3><pre id=l></pre>
-<script>async function r(){try{const d=await (await fetch('status.json?'+Date.now())).json(),n=d.tasks.length,x=d.tasks.filter(t=>t.state=='done').length,now=Date.now()/1e3;
-sum.textContent=`${x}/${n} done · ${d.tasks.filter(t=>t.state=='running').length} running`;bar.firstChild.style.width=100*x/n+'%';
-g.innerHTML=d.tasks.map(t=>`<div class="k ${t.state}"><span class=s>${t.state}</span><b>${t.id} · ${t.title}</b><div class=m>model: ${t.model}${t.start?' · '+Math.round((t.end||now)-t.start)+'s':''}</div><div>${t.note||''}</div></div>`).join('');
-l.textContent=d.log.slice(-30).reverse().map(e=>new Date(e[0]*1e3).toLocaleTimeString()+' '+e[1]+' '+e[2]+' '+e[3]).join('\n')}catch(e){}}r();setInterval(r,1500)</script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Build Tracker — Live Mission Gantt</title>
+<style>
+  :root {
+    --bg:#050914; --panel:#0d1528; --panel2:#131d35; --line:#233152;
+    --ink:#e6edf7; --muted:#8b99b8; --cyan:#38bdf8; --pink:#f4a8c5;
+    --run:#ffb020; --done:#34e0a1; --fail:#ff5470; --pend:#5d6c8e;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; padding:20px 24px 36px; background:var(--bg); color:var(--ink);
+    font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+    background-image:
+      linear-gradient(rgba(56,189,248,.04) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(56,189,248,.04) 1px,transparent 1px);
+    background-size:32px 32px;
+  }
+  .wrap { max-width:1360px; margin:0 auto; display:flex; flex-direction:column; gap:14px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:22px; letter-spacing:.02em; }
+  .m { color:var(--muted); font-size:12px; font-family:var(--mono); }
+  #bar { height:8px; background:#19233d; border-radius:999px; overflow:hidden; }
+  #bar i { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--cyan),var(--done)); transition:width .4s ease; }
+
+  /* Collapsible Live Gantt Chart */
+  .gantt { background:var(--panel); border:1px solid rgba(56,189,248,.34); border-radius:12px; overflow:hidden; }
+  .gantt-hd { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px 14px; background:rgba(15,24,46,.92); border-bottom:1px solid rgba(56,189,248,.16); }
+  .gantt.collapsed .gantt-hd { border-bottom-color:transparent; }
+  .gantt-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .gantt-title { font:700 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--cyan); }
+  .kpi { font:600 10.5px/1 var(--mono); padding:4px 9px; border-radius:999px; background:#091020; border:1px solid var(--line); color:var(--ink); font-variant-numeric:tabular-nums; }
+  .kpi b { color:var(--cyan); }
+  .kpi.done b { color:var(--done); }
+  .toggle-btn { display:inline-flex; align-items:center; gap:5px; padding:5px 10px; border-radius:7px; background:rgba(56,189,248,.14); border:1px solid rgba(56,189,248,.42); color:#bae6fd; font:600 11px/1 var(--mono); cursor:pointer; }
+  .toggle-btn:hover { background:rgba(56,189,248,.24); color:#fff; }
+  .chev { width:13px; height:13px; transition:transform .24s ease; }
+  .gantt.collapsed .chev { transform:rotate(-90deg); }
+  .gantt-wrap { display:grid; grid-template-rows:1fr; transition:grid-template-rows .26s ease, opacity .2s ease; opacity:1; }
+  .gantt.collapsed .gantt-wrap { grid-template-rows:0fr; opacity:0; }
+  .gantt-inner { overflow:hidden; }
+  .gantt-scroll { overflow-x:auto; padding:10px 14px 12px; }
+  .gantt-chart { min-width:680px; position:relative; }
+  .ruler { display:grid; grid-template-columns:220px 1fr; border-bottom:1px solid var(--line); padding-bottom:6px; margin-bottom:6px; }
+  .ruler-track { position:relative; height:26px; }
+  .tick { position:absolute; bottom:0; transform:translateX(-50%); font:600 9.5px/1.1 var(--mono); color:var(--muted); text-align:center; pointer-events:none; }
+  .tick.first { transform:none; }
+  .now-badge { position:absolute; top:0; transform:translateX(-50%); padding:2px 6px; border-radius:999px; background:linear-gradient(90deg,var(--pink),var(--cyan)); color:#050914; font:800 8.5px/1 var(--mono); z-index:6; }
+  .lanes { position:relative; display:flex; flex-direction:column; gap:4px; }
+  .grid-ov { position:absolute; top:0; bottom:0; left:220px; right:0; pointer-events:none; z-index:1; }
+  .gridline { position:absolute; top:0; bottom:0; width:1px; background:rgba(56,189,248,.08); }
+  .now-line { position:absolute; top:-6px; bottom:0; width:2px; transform:translateX(-1px); background:linear-gradient(180deg,var(--pink),var(--cyan)); box-shadow:0 0 10px rgba(56,189,248,.65); z-index:5; }
+  .lane { position:relative; z-index:2; display:grid; grid-template-columns:220px 1fr; align-items:center; min-height:32px; border-radius:7px; background:rgba(19,29,53,.55); border:1px solid rgba(56,189,248,.09); }
+  .lane:hover { background:rgba(24,38,70,.8); border-color:rgba(56,189,248,.3); }
+  .lane-meta { padding:4px 10px; border-right:1px solid rgba(56,189,248,.12); overflow:hidden; }
+  .lane-name { font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lane-sub { font:500 9.5px/1.2 var(--mono); color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lane-track { position:relative; height:28px; display:flex; align-items:center; }
+  .gbar { position:absolute; height:18px; border-radius:5px; padding:0 7px; display:flex; align-items:center; font:700 9.5px/1 var(--mono); white-space:nowrap; min-width:8px; cursor:pointer; z-index:3; }
+  .gbar.running { background:linear-gradient(90deg,rgba(14,116,144,.8),rgba(56,189,248,.75)); border:1px solid var(--cyan); color:#fff; animation:p 1.6s infinite; }
+  .gbar.done { background:linear-gradient(90deg,rgba(6,95,70,.8),rgba(52,224,161,.6)); border:1px solid var(--done); color:#ecfdf5; }
+  .gbar.failed { background:rgba(159,18,57,.8); border:1px solid var(--fail); color:#fff1f2; }
+  .gbar.pending { background:repeating-linear-gradient(-45deg,rgba(148,163,184,.12) 0 4px,transparent 4px 8px); border:1px dashed rgba(148,163,184,.45); color:var(--muted); }
+
+  /* Cards + Log */
+  .g { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+  .k { background:var(--panel); border-radius:10px; padding:12px 14px; border:1px solid var(--line); border-left:4px solid var(--pend); }
+  .k.running { border-left-color:var(--run); animation:p 1.4s infinite; }
+  .k.done { border-left-color:var(--done); }
+  .k.failed { border-left-color:var(--fail); }
+  @keyframes p { 50% { box-shadow:0 0 14px rgba(56,189,248,.45); } }
+  .s { float:right; font:700 10.5px/1 var(--mono); text-transform:uppercase; }
+  pre { background:var(--panel); border:1px solid var(--line); padding:12px; border-radius:10px; color:var(--muted); max-height:220px; overflow:auto; font:12px/1.45 var(--mono); margin:0; }
+
+  /* Tooltip */
+  #tip { position:fixed; z-index:999; pointer-events:none; display:none; max-width:300px; background:rgba(6,11,24,.96); border:1px solid rgba(56,189,248,.6); border-radius:9px; padding:9px 11px; font:11px/1.45 var(--mono); color:var(--ink); box-shadow:0 12px 30px rgba(0,0,0,.6); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="title">⚒ Build Tracker</h1>
+      <div class="m" id="sum">Connecting to status.json...</div>
+    </div>
+  </header>
+
+  <section class="gantt" id="ganttCard" aria-label="Live Build Gantt Chart">
+    <div class="gantt-hd">
+      <div class="gantt-left">
+        <span class="gantt-title">Live Build Gantt Timeline</span>
+        <span class="kpi">ELAPSED <b id="gElapsed">00:00</b></span>
+        <span class="kpi" id="gLanesKpi"><b id="gLanes">0/0</b> ACTIVE</span>
+        <span class="kpi" id="gDoneKpi">DONE <b id="gDone">0/0</b></span>
+      </div>
+      <button type="button" class="toggle-btn" id="gToggle" aria-expanded="true" aria-controls="gWrap">
+        <span id="gToggleLbl">Collapse</span>
+        <svg class="chev" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 8 10 13 15 8"/></svg>
+      </button>
+    </div>
+    <div class="gantt-wrap" id="gWrap"><div class="gantt-inner"><div class="gantt-scroll"><div class="gantt-chart" id="gChart"></div></div></div></div>
+  </section>
+
+  <div id="bar"><i></i></div>
+  <div class="g" id="g"></div>
+  <h3 style="margin:4px 0 0;font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--cyan)">Event Log</h3>
+  <pre id="l"></pre>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmtClock = sec => {
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    const pad = n => String(n).padStart(2, '0');
+    return h ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+  };
+  const fmtDur = sec => {
+    sec = Math.max(0, Math.floor(sec));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m ? `${m}m ${s}s` : `${s}s`;
+  };
+
+  // Collapsible Gantt persistence
+  const KEY = 'build_tracker_gantt_collapsed';
+  function setCollapsed(c) {
+    $('ganttCard').classList.toggle('collapsed', c);
+    $('gToggle').setAttribute('aria-expanded', c ? 'false' : 'true');
+    $('gToggleLbl').textContent = c ? 'Expand' : 'Collapse';
+    if (c) $('tip').style.display = 'none';
+    try { localStorage.setItem(KEY, c ? '1' : '0'); } catch {}
+  }
+  let initC = false;
+  try { initC = localStorage.getItem(KEY) === '1'; } catch {}
+  setCollapsed(initC);
+  $('gToggle').addEventListener('click', () => setCollapsed(!$('ganttCard').classList.contains('collapsed')));
+
+  let lastData = null;
+  let taskById = {};
+  let hoverId = null;
+
+  function renderGantt(d) {
+    const tasks = d.tasks || [];
+    const nowS = Date.now() / 1000;
+    const starts = tasks.map(t => t.start).filter(Boolean);
+    const logStarts = (d.log || []).map(e => e[0]).filter(Boolean);
+    const t0 = starts.length ? Math.min(...starts, ...(logStarts.length ? [logStarts[0]] : [])) : (d.updated || nowS) - 10;
+    const span = Math.max(30, (nowS - t0) * 1.06);
+    const runN = tasks.filter(t => t.state === 'running').length;
+    const doneN = tasks.filter(t => t.state === 'done').length;
+
+    $('gElapsed').textContent = fmtClock(nowS - t0);
+    $('gLanes').textContent = `${runN}/${tasks.length}`;
+    $('gDone').textContent = `${doneN}/${tasks.length}`;
+    $('gLanesKpi').classList.toggle('done', tasks.length > 0 && doneN === tasks.length);
+    $('gDoneKpi').classList.toggle('done', tasks.length > 0 && doneN === tasks.length);
+
+    const stepChoices = [10, 15, 30, 60, 120, 300, 600, 1800, 3600];
+    const step = stepChoices.find(s => span / s <= 7) || 3600;
+    const pct = ts => Math.max(0, Math.min(100, ((ts - t0) / span) * 100));
+    const nowPct = pct(nowS);
+
+    let ticksHtml = '', gridHtml = '';
+    for (let off = 0; off <= span; off += step) {
+      const p = (off / span) * 100;
+      const lbl = off === 0 ? '+0s' : (off % 60 === 0 ? `+${off / 60}m` : `+${off}s`);
+      ticksHtml += `<div class="tick ${off === 0 ? 'first' : ''}" style="left:${p.toFixed(2)}%">${lbl}</div>`;
+      gridHtml += `<div class="gridline" style="left:${p.toFixed(2)}%"></div>`;
+    }
+
+    taskById = {};
+    const lanesHtml = tasks.map(t => {
+      taskById[t.id] = t;
+      let leftP = 0, widthP = 6, label = 'pending';
+      if (t.start) {
+        const endS = t.end || (t.state === 'running' ? nowS : t.start + 1);
+        leftP = pct(t.start);
+        widthP = Math.max(1.2, pct(endS) - leftP);
+        const durStr = fmtDur(endS - t.start);
+        label = t.state === 'done' ? `✓ ${durStr}` : t.state === 'failed' ? `✕ ${durStr}` : durStr;
+      } else {
+        leftP = Math.min(92, nowPct);
+        widthP = Math.max(4, 100 - leftP);
+      }
+      return `<div class="lane">
+        <div class="lane-meta">
+          <div class="lane-name">${esc(t.id)} · ${esc(t.title)}</div>
+          <div class="lane-sub">${esc(t.model || 'agent')} · ${esc(t.state)}</div>
+        </div>
+        <div class="lane-track">
+          <div class="gbar ${esc(t.state)}" data-tid="${esc(t.id)}" style="left:${leftP.toFixed(2)}%;width:${widthP.toFixed(2)}%">${esc(label)}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    $('gChart').innerHTML = `
+      <div class="ruler">
+        <div class="m" style="align-self:end">TASK LANE</div>
+        <div class="ruler-track">${ticksHtml}<div class="now-badge" style="left:${nowPct.toFixed(2)}%">NOW</div></div>
+      </div>
+      <div class="lanes">
+        <div class="grid-ov">${gridHtml}<div class="now-line" style="left:${nowPct.toFixed(2)}%"></div></div>
+        ${lanesHtml}
+      </div>`;
+  }
+
+  function showTip(tid, ev) {
+    const t = taskById[tid];
+    if (!t) return;
+    const nowS = Date.now() / 1000;
+    const dur = t.start ? fmtDur((t.end || (t.state === 'running' ? nowS : t.start)) - t.start) : 'waiting';
+    const startStr = t.start ? new Date(t.start * 1000).toLocaleTimeString() : '—';
+    $('tip').innerHTML = `<b>${esc(t.id)} · ${esc(t.title)}</b><br>state: ${esc(t.state)} · model: ${esc(t.model || '—')}<br>start: ${esc(startStr)} · dur: ${esc(dur)}${t.note ? '<br>' + esc(t.note) : ''}`;
+    $('tip').style.display = 'block';
+    const r = $('tip').getBoundingClientRect();
+    let x = ev.clientX + 14, y = ev.clientY + 14;
+    if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+    if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 14;
+    $('tip').style.left = x + 'px';
+    $('tip').style.top = y + 'px';
+  }
+  $('gChart').addEventListener('mousemove', e => {
+    const b = e.target.closest('[data-tid]');
+    if (!b) { hoverId = null; $('tip').style.display = 'none'; return; }
+    hoverId = b.getAttribute('data-tid');
+    showTip(hoverId, e);
+  });
+  $('gChart').addEventListener('mouseleave', () => { hoverId = null; $('tip').style.display = 'none'; });
+
+  async function refresh() {
+    try {
+      const d = await (await fetch('status.json?' + Date.now())).json();
+      lastData = d;
+      const tasks = d.tasks || [];
+      const n = Math.max(1, tasks.length);
+      const x = tasks.filter(t => t.state === 'done').length;
+      const runN = tasks.filter(t => t.state === 'running').length;
+      const nowS = Date.now() / 1000;
+      $('sum').textContent = `${x}/${tasks.length} done · ${runN} running`;
+      $('bar').firstChild.style.width = (100 * x / n) + '%';
+      renderGantt(d);
+      $('g').innerHTML = tasks.map(t => `<div class="k ${esc(t.state)}"><span class="s">${esc(t.state)}</span><b>${esc(t.id)} · ${esc(t.title)}</b><div class="m">model: ${esc(t.model || '—')}${t.start ? ' · ' + Math.round((t.end || nowS) - t.start) + 's' : ''}</div><div>${esc(t.note || '')}</div></div>`).join('');
+      $('l').textContent = (d.log || []).slice(-30).reverse().map(e => new Date(e[0] * 1000).toLocaleTimeString() + ' ' + e[1] + ' ' + e[2] + ' ' + e[3]).join('\n');
+    } catch (_) {}
+  }
+
+  refresh();
+  setInterval(refresh, 1500);
+  setInterval(() => { if (lastData) renderGantt(lastData); }, 1000);
+})();
+</script>
+</body>
+</html>
